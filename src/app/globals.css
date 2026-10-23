@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+/* Brand colors, taken from the ResuCheck logo */
+@theme {
+  --color-brand-50: #fef0f2;
+  --color-brand-100: #fce0e3;
+  --color-brand-200: #f9c1c7;
+  --color-brand-300: #f6a1aa;
+  --color-brand-600: #ea2f43;
+  --color-brand-700: #c9283a;
+  --color-brand-800: #8c1c28;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #ffffff;
+  color: #b10202;
+}
