@@ -19,12 +19,70 @@ const PRIORITY_STYLES: Record<string, string> = {
   low: "bg-neutral-100 text-neutral-600",
 };
 
+function formatSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function DocumentIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className="h-6 w-6 shrink-0 text-brand-600"
+      aria-hidden="true"
+    >
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" strokeLinejoin="round" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RemoveButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Remove file"
+      title="Remove file"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-brand-50 hover:text-brand-700"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="h-4 w-4"
+        aria-hidden="true"
+      >
+        <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
 export default function Home() {
   const [role, setRole] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
+
+  // Choosing or removing a file. The preview URL lives only in this browser
+  // tab and is released when the file is removed or replaced.
+  function selectFile(next: File | null) {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(next);
+    setPreviewUrl(next ? URL.createObjectURL(next) : null);
+    setError(null);
+  }
+
+  function removeFile() {
+    selectFile(null);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -101,14 +159,25 @@ export default function Home() {
           <label htmlFor="file" className="mb-1 block text-sm font-medium">
             Resume (PDF, up to 4 MB)
           </label>
-          <input
-            id="file"
-            type="file"
-            accept="application/pdf"
-            required
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:font-medium file:text-brand-700 hover:file:bg-brand-100"
-          />
+          {file ? (
+            <div className="flex items-center gap-3 rounded-lg border border-neutral-300 px-3 py-2">
+              <DocumentIcon />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{file.name}</p>
+                <p className="text-xs text-neutral-500">{formatSize(file.size)}</p>
+              </div>
+              <RemoveButton onClick={removeFile} />
+            </div>
+          ) : (
+            <input
+              id="file"
+              type="file"
+              accept="application/pdf"
+              required
+              onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
+              className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:font-medium file:text-brand-700 hover:file:bg-brand-100"
+            />
+          )}
         </div>
 
         <button
@@ -137,14 +206,36 @@ export default function Home() {
       {/* Results */}
       {result && (
         <section className="mt-8 space-y-6">
-          <div className="rounded-2xl border border-neutral-200 p-6 text-center shadow-sm">
-            <p className="text-sm font-medium uppercase tracking-wide text-neutral-500">
-              Your ResuCheck score
-            </p>
-            <p className="mt-1 text-6xl font-bold text-brand-600">{result.percentage}%</p>
-            <p className="mt-2 text-sm text-neutral-600">
-              ATS-friendliness {result.atsPoints}/30 &nbsp;|&nbsp; Quality {result.qualityPoints}/70
-            </p>
+          <div className={`grid gap-6 ${file ? "md:grid-cols-[1fr_15rem]" : ""}`}>
+            <div className="flex flex-col justify-center rounded-2xl border border-neutral-200 p-6 text-center shadow-sm">
+              <p className="text-sm font-medium uppercase tracking-wide text-neutral-500">
+                Your ResuCheck score
+              </p>
+              <p className="mt-1 text-6xl font-bold text-brand-600">{result.percentage}%</p>
+              <p className="mt-2 text-sm text-neutral-600">
+                ATS-friendliness {result.atsPoints}/30 &nbsp;|&nbsp; Quality {result.qualityPoints}/70
+              </p>
+            </div>
+            {file && (
+              <div className="order-first rounded-2xl border border-neutral-200 p-4 shadow-sm md:order-last">
+                <div className="flex items-center gap-3">
+                  <DocumentIcon />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{file.name}</p>
+                    <p className="text-xs text-neutral-500">{formatSize(file.size)}</p>
+                  </div>
+                  <RemoveButton onClick={removeFile} />
+                </div>
+                {previewUrl && (
+                  <iframe
+                    src={`${previewUrl}#toolbar=0&navpanes=0`}
+                    title="Resume preview"
+                    className="mt-3 hidden h-56 w-full rounded-lg border border-neutral-200 md:block"
+                  />
+                )}
+                <p className="mt-2 text-xs text-neutral-500">Shown only on your device.</p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-neutral-200 p-5 shadow-sm sm:p-6">
