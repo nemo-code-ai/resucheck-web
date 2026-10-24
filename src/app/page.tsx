@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import Image from "next/image";
-import type { AnalyzeResponse } from "@/lib/types";
+import type { AnalyzeResponse } from "@/src/lib/types";
 
 const CATEGORY_LABELS: Record<string, string> = {
   projects: "Projects and technical depth",

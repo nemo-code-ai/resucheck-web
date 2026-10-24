@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { extractResumeText } from "@/lib/extractText";
-import { runCodeChecks } from "@/lib/codeChecks";
-import { analyzeWithAI } from "@/lib/analyzeWithAI";
-import { calculateScore } from "@/lib/calculateScore";
-import type { AnalyzeResponse } from "@/lib/types";
+import { extractResumeText } from "@/src/lib/extractText";
+import { runCodeChecks } from "@/src/lib/codeChecks";
+import { analyzeWithAI } from "@/src/lib/analyzeWithAI";
+import { calculateScore } from "@/src/lib/calculateScore";
+import type { AnalyzeResponse } from "@/src/lib/types";
 
 export const maxDuration = 60; // seconds; the AI call can take a while
 
