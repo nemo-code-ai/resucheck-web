@@ -1,17 +1,27 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { extractResumeText } from "@/src/lib/extractText";
 import { runCodeChecks } from "@/src/lib/codeChecks";
 import { analyzeWithAI } from "@/src/lib/analyzeWithAI";
 import { calculateScore } from "@/src/lib/calculateScore";
-import type { AnalyzeResponse } from "@/src/lib/types";
+import { getCurrentUser } from "@/src/lib/supabase/server";
+import { countAnonAnalyses, countUserAnalyses, saveAnalysis } from "@/src/lib/db";
+import { MAX_ANALYSES_PER_USER, decideAccess, toTeaser } from "@/src/lib/access";
+import type { ApiError, FullResult } from "@/src/lib/types";
 
 export const maxDuration = 60; // seconds; the AI call can take a while
 
 // Vercel rejects request bodies above about 4.5 MB, so stay under that.
 const MAX_BYTES = 4 * 1024 * 1024;
 
-function fail(message: string, status: number) {
-  return NextResponse.json({ error: message }, { status });
+// A random id kept in the visitor's browser, so we can recognise
+// "this browser already used its free check".
+const ANON_COOKIE = "rc_anon";
+const ANON_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+
+function fail(message: string, status: number, code?: ApiError["code"]) {
+  const body: ApiError = code ? { error: message, code } : { error: message };
+  return NextResponse.json(body, { status });
 }
 
 export async function POST(request: Request) {
@@ -42,7 +52,38 @@ export async function POST(request: Request) {
     return fail("That doesn't look like a PDF file.", 400);
   }
 
-  // ---------- 2. Read the PDF (in memory only) ----------
+  // ---------- 2. Who is this, and are they allowed another check? ----------
+  const cookieJar = await cookies();
+  const existingAnonId = cookieJar.get(ANON_COOKIE)?.value;
+  const anonId = existingAnonId ?? crypto.randomUUID();
+
+  let user: { id: string; email: string | null } | null = null;
+  let usedBefore = 0;
+  try {
+    user = await getCurrentUser();
+    const [userCount, anonCount] = await Promise.all([
+      user ? countUserAnalyses(user.id) : Promise.resolve(0),
+      existingAnonId ? countAnonAnalyses(existingAnonId) : Promise.resolve(0),
+    ]);
+    usedBefore = userCount;
+
+    const decision = decideAccess({ signedIn: Boolean(user), userCount, anonCount });
+    if (decision === "SIGN_IN_REQUIRED") {
+      return fail(
+        "You've used your free check. Sign in with Google to unlock your report and get more checks.",
+        403,
+        "SIGN_IN_REQUIRED"
+      );
+    }
+    if (decision === "LIMIT_REACHED") {
+      return fail("You've used all your free checks.", 403, "LIMIT_REACHED");
+    }
+  } catch (error) {
+    console.error("Access check failed:", error);
+    return fail("Something went wrong on our side. Please try again.", 500);
+  }
+
+  // ---------- 3. Read the PDF (in memory only) ----------
   let extracted;
   try {
     extracted = await extractResumeText(bytes);
@@ -51,12 +92,12 @@ export async function POST(request: Request) {
   }
   if (!extracted.readable) {
     return fail(
-      "We couldn't read any text in this PDF. It may be a scan or an image, which ATS software can't read either. This did not count as an upload.",
+      "We couldn't read any text in this PDF. It may be a scan or an image, which ATS software can't read either. This did not count as a check.",
       422
     );
   }
 
-  // ---------- 3. Score it ----------
+  // ---------- 4. Score it ----------
   const checks = runCodeChecks(extracted.text, extracted.pages, extracted.links);
 
   let analysis;
@@ -73,17 +114,45 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = calculateScore(checks, analysis);
-  if (!result) {
-    return fail("This doesn't look like a resume, so it did not count as an upload.", 422);
+  const scored = calculateScore(checks, analysis);
+  if (!scored) {
+    return fail("This doesn't look like a resume, so it did not count as a check.", 422);
   }
 
-  // Later: this is where we will count the upload for the signed-in user.
-
-  const response: AnalyzeResponse = {
-    ...result,
+  const core = {
+    percentage: scored.percentage,
+    atsPoints: scored.atsPoints,
+    qualityPoints: scored.qualityPoints,
+    categories: scored.categories,
     atsFindings: checks.findings,
     suggestions: analysis.suggestions ?? [],
   };
-  return NextResponse.json(response);
+
+  // ---------- 5. Save the result (never the PDF) ----------
+  try {
+    await saveAnalysis(user ? { userId: user.id } : { anonId }, role, core);
+  } catch (error) {
+    console.error("Saving the result failed:", error);
+    return fail("We couldn't save your result. Please try again.", 500);
+  }
+
+  // ---------- 6. Answer ----------
+  const full: FullResult = {
+    access: "full",
+    ...core,
+    used: usedBefore + 1,
+    limit: MAX_ANALYSES_PER_USER,
+  };
+
+  if (user) return NextResponse.json(full);
+
+  // Anonymous visitor: remember this browser, and send only the teaser.
+  cookieJar.set(ANON_COOKIE, anonId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: ANON_COOKIE_MAX_AGE,
+  });
+  return NextResponse.json(toTeaser(full));
 }
